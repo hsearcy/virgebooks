@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>VirgeBooks</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <!-- Landing / library view -->
+  <main id="library" class="view">
+    <header class="hero">
+      <h1>📚 VirgeBooks</h1>
+      <p class="tagline">Little stories to help you learn to read.</p>
+    </header>
+
+    <section class="new-story">
+      <label for="instructions">Make a new story</label>
+      <textarea id="instructions" rows="2"
+        placeholder="Optional: what should the story be about? (e.g. a pig and a red hat)"></textarea>
+      <div class="new-story-row">
+        <label class="pages-label">Pages
+          <select id="page-count">
+            <option>4</option>
+            <option>6</option>
+            <option>8</option>
+            <option selected>10</option>
+            <option>12</option>
+          </select>
+        </label>
+        <button id="generate-btn" class="big-btn">✨ Make a story</button>
+      </div>
+    </section>
+
+    <section>
+      <h2 class="shelf-title">My stories</h2>
+      <div id="shelf" class="shelf">
+        <p id="empty-msg" class="empty">No stories yet. Make your first one above!</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- Generating overlay -->
+  <div id="overlay" class="overlay hidden">
+    <div class="overlay-card">
+      <div class="spinner"></div>
+      <p id="overlay-msg">Getting ready...</p>
+      <div id="progress-wrap" class="progress-wrap hidden">
+        <div id="progress-bar" class="progress-bar"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Book reader view -->
+  <main id="reader" class="view hidden">
+    <button id="close-book" class="close-book" aria-label="Back to library">✕</button>
+    <div class="book">
+      <button id="prev" class="page-arrow left" aria-label="Previous page">‹</button>
+      <div class="page">
+        <div class="page-image-wrap">
+          <img id="page-image" alt="" />
+        </div>
+        <p id="page-sentence" class="sentence"></p>
+      </div>
+      <button id="next" class="page-arrow right" aria-label="Next page">›</button>
+    </div>
+    <div id="page-dots" class="dots"></div>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

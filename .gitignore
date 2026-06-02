@@ -1,0 +1,12 @@
+# Generated stories and images
+stories/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# Local env / secrets
+.env
