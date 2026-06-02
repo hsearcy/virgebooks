@@ -46,11 +46,19 @@ and tablets/phones on the same network) through a web browser.
   per page).
 - `gemini-2.5-flash-image` (Nano Banana) draws each page. A fixed style prompt plus the
   first page used as a visual reference keeps the art and character consistent.
+- **Pictures are drawn concurrently.** Page 1 is drawn first as the style/character
+  anchor, then the remaining pages and the "The End." page are generated in parallel —
+  all referencing that same anchor, so they stay consistent while finishing several
+  times faster (~4x in practice).
 - Each story is saved under `stories/<id>/` as `story.json` plus `page_N.png` images.
 
 ## Notes
 
 - Models are configurable near the top of `app.py` (`TEXT_MODEL`, `IMAGE_MODEL`), as is
   the illustration style (`ILLUSTRATION_STYLE`).
+- Image concurrency defaults to 10 parallel draws (`VB_IMAGE_WORKERS`). Rate-limited
+  (429) requests retry automatically with exponential backoff, so a throttled draw waits
+  and retries instead of dropping a picture. Lower the worker count if you're on a
+  low-quota tier and want to avoid the backoff waits.
 - If image generation fails for a page, the story still saves and shows the sentence
   without a picture.

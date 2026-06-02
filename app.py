@@ -12,8 +12,10 @@ Then open http://localhost:5000 in any browser.
 """
 
 import base64
+import concurrent.futures
 import json
 import os
+import random
 import re
 import threading
 import time
@@ -55,6 +57,16 @@ TEXT_MODEL = "gemini-2.5-flash"
 IMAGE_MODEL = "gemini-2.5-flash-image"
 
 DEFAULT_PAGE_COUNT = 10
+
+# How many page illustrations to generate at once. Pages 2..N (and the closing
+# page) all reference page 1, so they're independent of each other and can run
+# concurrently. Rate-limited (429) requests retry with backoff, so this can run
+# hot; tune down if you're on a low-quota tier and want to avoid the retries.
+MAX_IMAGE_WORKERS = int(os.environ.get("VB_IMAGE_WORKERS", "10"))
+
+# Retry budget for rate-limited (429 / quota) image requests, with exponential
+# backoff. A throttled request waits and retries instead of dropping a picture.
+RATE_LIMIT_MAX_RETRIES = 5
 
 # One fixed style so every picture in every book looks like it belongs together.
 ILLUSTRATION_STYLE = (
@@ -178,8 +190,23 @@ def generate_story_text(client, instructions, page_count):
     return data.get("title", "A Story"), data.get("character", ""), pages
 
 
+def _is_rate_limit_error(exc):
+    """True if an exception looks like an API rate-limit / quota (429) error."""
+    code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+    if code == 429:
+        return True
+    msg = str(exc).lower()
+    return any(
+        s in msg for s in ("429", "resource_exhausted", "rate limit", "quota")
+    )
+
+
 def generate_image(client, picture_desc, character, out_path, reference_png=None):
-    """Generate one illustration. Returns True on success."""
+    """Generate one illustration. Returns True on success.
+
+    Retries with exponential backoff when the API rate-limits us, so running many
+    images concurrently doesn't silently drop pictures.
+    """
     prompt_parts = [
         ILLUSTRATION_STYLE,
         f"Main character: {character}." if character else "",
@@ -193,16 +220,29 @@ def generate_image(client, picture_desc, character, out_path, reference_png=None
             contents.append(
                 types.Part.from_bytes(data=f.read(), mime_type="image/png")
             )
-    resp = client.models.generate_content(model=IMAGE_MODEL, contents=contents)
-    for part in resp.candidates[0].content.parts:
-        inline = getattr(part, "inline_data", None)
-        if inline and inline.data:
-            data = inline.data
-            if isinstance(data, str):
-                data = base64.b64decode(data)
-            with open(out_path, "wb") as f:
-                f.write(data)
-            return True
+
+    for attempt in range(RATE_LIMIT_MAX_RETRIES + 1):
+        try:
+            resp = client.models.generate_content(
+                model=IMAGE_MODEL, contents=contents
+            )
+            for part in resp.candidates[0].content.parts:
+                inline = getattr(part, "inline_data", None)
+                if inline and inline.data:
+                    data = inline.data
+                    if isinstance(data, str):
+                        data = base64.b64decode(data)
+                    with open(out_path, "wb") as f:
+                        f.write(data)
+                    return True
+            return False  # responded, but contained no image
+        except Exception as exc:
+            if attempt < RATE_LIMIT_MAX_RETRIES and _is_rate_limit_error(exc):
+                # Exponential backoff with jitter to avoid a retry stampede.
+                delay = min(2 ** attempt, 30) + random.uniform(0, 1)
+                time.sleep(delay)
+                continue
+            raise
     return False
 
 
@@ -224,54 +264,69 @@ def run_generation(job_id, instructions, page_count):
         d = story_dir(story_id)
         os.makedirs(d, exist_ok=True)
 
+        total = len(pages) + 1  # +1 for the closing "The End." page
         set_status(
-            stage="drawing",
-            message="Drawing the pictures...",
-            total=len(pages) + 1,  # +1 for the closing "The End." page
-            done=0,
+            stage="drawing", message="Drawing the pictures...", total=total, done=0
         )
 
-        first_image_path = None
-        out_pages = []
-        for i, page in enumerate(pages):
-            img_name = f"page_{i + 1}.png"
+        done_count = [0]
+        done_lock = threading.Lock()
+
+        def draw(picture_desc, img_name, reference):
+            """Generate one illustration; bump progress. Returns the name or None."""
             img_path = os.path.join(d, img_name)
             try:
                 ok = generate_image(
-                    client,
-                    page.get("picture", page.get("sentence", "")),
-                    character,
-                    img_path,
-                    reference_png=first_image_path,
+                    client, picture_desc, character, img_path, reference_png=reference
                 )
             except Exception:
                 ok = False
-            if ok and first_image_path is None:
-                first_image_path = img_path
-            out_pages.append(
-                {
-                    "sentence": page.get("sentence", "").strip(),
-                    "image": img_name if ok else None,
-                }
-            )
-            set_status(done=i + 1)
+            with done_lock:
+                done_count[0] += 1
+                set_status(done=done_count[0])
+            return img_name if ok else None
 
-        # Every book ends with an illustrated "The End." page.
-        end_name = "page_end.png"
-        end_path = os.path.join(d, end_name)
-        try:
-            ok = generate_image(
-                client,
+        # 1) Draw page 1 first as the style/character anchor for everything else.
+        anchor_name = draw(
+            pages[0].get("picture", pages[0].get("sentence", "")), "page_1.png", None
+        )
+        anchor = os.path.join(d, anchor_name) if anchor_name else None
+        images = [anchor_name] + [None] * (len(pages) - 1)
+        end_image = [None]
+
+        # 2) Fan out the rest of the pages + the end page, all against the anchor.
+        def schedule():
+            for i in range(1, len(pages)):
+                desc = pages[i].get("picture", pages[i].get("sentence", ""))
+                yield ("page", i, desc, f"page_{i + 1}.png")
+            yield (
+                "end",
+                None,
                 "the main character smiling and waving goodbye to the reader, a "
                 "warm and cozy story-ending scene",
-                character,
-                end_path,
-                reference_png=first_image_path,
+                "page_end.png",
             )
-        except Exception:
-            ok = False
-        out_pages.append({"sentence": "The End.", "image": end_name if ok else None})
-        set_status(done=len(pages) + 1)
+
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=MAX_IMAGE_WORKERS
+        ) as pool:
+            futures = {
+                pool.submit(draw, desc, name, anchor): (kind, idx)
+                for kind, idx, desc, name in schedule()
+            }
+            for fut in concurrent.futures.as_completed(futures):
+                kind, idx = futures[fut]
+                result = fut.result()
+                if kind == "page":
+                    images[idx] = result
+                else:
+                    end_image[0] = result
+
+        out_pages = [
+            {"sentence": pages[i].get("sentence", "").strip(), "image": images[i]}
+            for i in range(len(pages))
+        ]
+        out_pages.append({"sentence": "The End.", "image": end_image[0]})
 
         cover = next((p["image"] for p in out_pages if p["image"]), None)
         story = {
