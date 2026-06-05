@@ -1,0 +1,25 @@
+{
+  "id": "sample-red-cat-sun",
+  "title": "Red Cat Sun",
+  "character": "a small red cat with a big grin and a red hat",
+  "created": 0,
+  "cover": "page_1.svg",
+  "pages": [
+    {
+      "sentence": "Big sun lit red cat.",
+      "image": "page_1.svg"
+    },
+    {
+      "sentence": "Red cat ran to mat.",
+      "image": "page_2.svg"
+    },
+    {
+      "sentence": "Red cat had a nap.",
+      "image": "page_3.svg"
+    },
+    {
+      "sentence": "The End.",
+      "image": "page_end.svg"
+    }
+  ]
+}
