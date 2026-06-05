@@ -35,7 +35,7 @@ and tablets/phones on the same network) through a web browser.
    set GEMINI_API_KEY=your_key_here           # Windows (cmd)
    ```
 
-   Codex text + Codex SVG pictures, using your logged-in Codex subscription:
+   Codex text + Codex PNG pictures, using your logged-in Codex subscription:
    ```bash
    export VB_TEXT_PROVIDER=codex
    export VB_IMAGE_PROVIDER=codex
@@ -63,7 +63,7 @@ and tablets/phones on the same network) through a web browser.
 - `VB_IMAGE_PROVIDER=gemini` uses `gemini-2.5-flash-image` (Nano Banana) to draw PNG pages.
 - `VB_TEXT_PROVIDER=codex` and `VB_IMAGE_PROVIDER=codex` use the local `codex` CLI and your
   logged-in Codex subscription. Story text is generated as JSON, and pictures are generated
-  as simple static SVG illustrations, so no separate image API key is required.
+  as PNG illustrations with Image Gen 2, so no separate image API key is required.
 - A fixed style prompt plus the first page used as a visual reference keeps the art and
   character consistent.
 - **Pictures are drawn concurrently.** Page 1 is drawn first as the style/character
@@ -81,7 +81,7 @@ and tablets/phones on the same network) through a web browser.
   (429) requests retry automatically with exponential backoff, so a throttled draw waits
   and retries instead of dropping a picture. Lower the worker count if you're on a
   low-quota tier and want to avoid the backoff waits.
-- Codex SVG generation defaults to 2 parallel draws because each picture is a separate
+- Codex Image Gen 2 generation defaults to 2 parallel draws because each picture is a separate
   Codex CLI run. Increase `VB_IMAGE_WORKERS` if you want more speed.
 - If image generation fails for a page, the story still saves and shows the sentence
   without a picture.

@@ -142,7 +142,7 @@ def get_client():
     return genai.Client(api_key=api_key)
 
 
-def run_codex(prompt):
+def run_codex(prompt, sandbox="read-only", images=None):
     """Run Codex CLI with the user's logged-in subscription and return its answer."""
     with tempfile.NamedTemporaryFile("r", encoding="utf-8", delete=False) as out:
         out_path = out.name
@@ -152,10 +152,12 @@ def run_codex(prompt):
             "exec",
             "--skip-git-repo-check",
             "--sandbox",
-            "read-only",
+            sandbox,
             "--output-last-message",
             out_path,
         ]
+        for image in images or []:
+            cmd.extend(["--image", image])
         if CODEX_MODEL:
             cmd.extend(["--model", CODEX_MODEL])
         cmd.append("-")
@@ -205,17 +207,12 @@ def extract_json_object(text):
     return json.loads(text)
 
 
-def extract_svg(text):
-    """Extract a complete SVG document from raw model output."""
-    text = (text or "").strip()
-    match = re.search(r"<svg\b.*?</svg>", text, re.S | re.I)
-    if not match:
-        raise RuntimeError("Codex did not return an SVG illustration.")
-    svg = match.group(0).strip()
-    unsafe = ("<script", "javascript:", "<foreignobject", " onload=", " onclick=")
-    if any(marker in svg.lower() for marker in unsafe):
-        raise RuntimeError("Codex returned an unsafe SVG illustration.")
-    return svg
+def is_png(path):
+    """True if a file exists and starts with a PNG signature."""
+    if not os.path.exists(path):
+        return False
+    with open(path, "rb") as f:
+        return f.read(8) == b"\x89PNG\r\n\x1a\n"
 
 
 def slugify(text):
@@ -308,8 +305,9 @@ def _is_rate_limit_error(exc):
 def generate_image(client, picture_desc, character, out_path, reference_image=None):
     """Generate one illustration. Returns True on success.
 
-    Gemini writes PNG files. Codex CLI writes SVG files using the user's logged-in
-    Codex subscription, which avoids requiring a separate image-generation API key.
+    Gemini and Codex both write PNG files. Codex CLI uses Image Gen 2 through
+    the user's logged-in Codex subscription, which avoids requiring a separate
+    image-generation API key.
     Retries with exponential backoff when Gemini rate-limits us, so running many
     images concurrently doesn't silently drop pictures.
     """
@@ -322,33 +320,25 @@ def generate_image(client, picture_desc, character, out_path, reference_image=No
     ]
 
     if IMAGE_PROVIDER == "codex":
-        reference = ""
-        if reference_image and os.path.exists(reference_image):
-            with open(reference_image, "r", encoding="utf-8") as f:
-                reference = f.read(6000)
         codex_prompt = "\n".join(p for p in prompt_parts if p)
         codex_prompt += (
-            "\n\nCreate one simple, polished SVG illustration for a toddler's "
-            "storybook. Use a 4:3 viewBox such as 0 0 800 600. Make it cute, "
-            "calm, and extremely simple: one front-facing character, two dot "
-            "eyes, a tiny smile, rounded shapes, no teeth, no claws, no sharp "
-            "poses, no extra limbs, no detailed anatomy, no realism, no complex "
-            "overlapping body parts, and no scary expressions. Prefer an "
-            "icon-like preschool sticker style over detailed illustration. Use "
-            "only safe static SVG elements; no scripts, external links, "
-            "animation, text, letters, numbers, or words. Output ONLY the "
-            "complete <svg>...</svg> document with no markdown or commentary. "
-            "Do not run shell commands."
+            "\n\nUse Image Gen 2 to create one normal PNG illustration for a "
+            "toddler's storybook. Make it cute, warm, colorful, and gentle; "
+            "avoid scary expressions, extra limbs, distorted anatomy, text, "
+            "letters, numbers, logos, or watermarks. Use a 4:3 landscape "
+            "composition suitable for a picture book page. Save the final PNG "
+            f"exactly at this path: {out_path}. Do not create SVG. After saving, "
+            "verify the file exists and starts with the PNG signature."
         )
-        if reference:
+        attachments = []
+        if reference_image and os.path.exists(reference_image):
+            attachments.append(reference_image)
             codex_prompt += (
-                "\n\nReference SVG for consistent character/style. Match the same "
-                "character colors, shapes, and overall look:\n" + reference
+                "\n\nThe attached reference image is page 1. Keep the same main "
+                "character and overall storybook style, while drawing the new scene."
             )
-        svg = extract_svg(run_codex(codex_prompt))
-        with open(out_path, "w", encoding="utf-8") as f:
-            f.write(svg)
-        return True
+        run_codex(codex_prompt, sandbox="workspace-write", images=attachments)
+        return is_png(out_path)
 
     if IMAGE_PROVIDER != "gemini":
         raise RuntimeError(
@@ -426,7 +416,7 @@ def run_generation(job_id, instructions, page_count):
             return img_name if ok else None
 
         # 1) Draw page 1 first as the style/character anchor for everything else.
-        image_ext = "svg" if IMAGE_PROVIDER == "codex" else "png"
+        image_ext = "png"
 
         anchor_name = draw(
             pages[0].get("picture", pages[0].get("sentence", "")),
