@@ -329,10 +329,16 @@ def generate_image(client, picture_desc, character, out_path, reference_image=No
         codex_prompt = "\n".join(p for p in prompt_parts if p)
         codex_prompt += (
             "\n\nCreate one simple, polished SVG illustration for a toddler's "
-            "storybook. Use a 4:3 viewBox such as 0 0 800 600. Use only safe "
-            "static SVG elements; no scripts, external links, animation, text, "
-            "letters, numbers, or words. Output ONLY the complete <svg>...</svg> "
-            "document with no markdown or commentary. Do not run shell commands."
+            "storybook. Use a 4:3 viewBox such as 0 0 800 600. Make it cute, "
+            "calm, and extremely simple: one front-facing character, two dot "
+            "eyes, a tiny smile, rounded shapes, no teeth, no claws, no sharp "
+            "poses, no extra limbs, no detailed anatomy, no realism, no complex "
+            "overlapping body parts, and no scary expressions. Prefer an "
+            "icon-like preschool sticker style over detailed illustration. Use "
+            "only safe static SVG elements; no scripts, external links, "
+            "animation, text, letters, numbers, or words. Output ONLY the "
+            "complete <svg>...</svg> document with no markdown or commentary. "
+            "Do not run shell commands."
         )
         if reference:
             codex_prompt += (
