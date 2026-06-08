@@ -17,8 +17,10 @@ import json
 import os
 import random
 import re
+import subprocess
 import threading
 import time
+import tempfile
 import uuid
 
 from flask import Flask, jsonify, request, send_from_directory
@@ -53,8 +55,17 @@ def _load_dotenv():
 
 _load_dotenv()
 
-TEXT_MODEL = "gemini-2.5-flash"
-IMAGE_MODEL = "gemini-2.5-flash-image"
+TEXT_PROVIDER = os.environ.get("VB_TEXT_PROVIDER", "gemini").strip().lower()
+IMAGE_PROVIDER = os.environ.get("VB_IMAGE_PROVIDER", "gemini").strip().lower()
+
+TEXT_MODEL = os.environ.get("VB_TEXT_MODEL", "gemini-2.5-flash")
+IMAGE_MODEL = os.environ.get("VB_IMAGE_MODEL", "gemini-2.5-flash-image")
+
+# Codex CLI lets a logged-in Codex/ChatGPT subscription create the story text
+# and SVG illustrations without needing a separate Gemini or OpenAI API key.
+CODEX_COMMAND = os.environ.get("VB_CODEX_COMMAND", "codex")
+CODEX_MODEL = os.environ.get("VB_CODEX_MODEL", "").strip()
+CODEX_TIMEOUT = int(os.environ.get("VB_CODEX_TIMEOUT", "300"))
 
 DEFAULT_PAGE_COUNT = 10
 
@@ -62,7 +73,9 @@ DEFAULT_PAGE_COUNT = 10
 # page) all reference page 1, so they're independent of each other and can run
 # concurrently. Rate-limited (429) requests retry with backoff, so this can run
 # hot; tune down if you're on a low-quota tier and want to avoid the retries.
-MAX_IMAGE_WORKERS = int(os.environ.get("VB_IMAGE_WORKERS", "10"))
+MAX_IMAGE_WORKERS = int(
+    os.environ.get("VB_IMAGE_WORKERS", "2" if IMAGE_PROVIDER == "codex" else "10")
+)
 
 # Retry budget for rate-limited (429 / quota) image requests, with exponential
 # backoff. A throttled request waits and retries instead of dropping a picture.
@@ -129,6 +142,79 @@ def get_client():
     return genai.Client(api_key=api_key)
 
 
+def run_codex(prompt, sandbox="read-only", images=None):
+    """Run Codex CLI with the user's logged-in subscription and return its answer."""
+    with tempfile.NamedTemporaryFile("r", encoding="utf-8", delete=False) as out:
+        out_path = out.name
+    try:
+        cmd = [
+            CODEX_COMMAND,
+            "exec",
+            "--skip-git-repo-check",
+            "--sandbox",
+            sandbox,
+            "--output-last-message",
+            out_path,
+        ]
+        for image in images or []:
+            cmd.extend(["--image", image])
+        if CODEX_MODEL:
+            cmd.extend(["--model", CODEX_MODEL])
+        cmd.append("-")
+        proc = subprocess.run(
+            cmd,
+            input=prompt,
+            text=True,
+            capture_output=True,
+            timeout=CODEX_TIMEOUT,
+            cwd=BASE_DIR,
+            check=False,
+        )
+        try:
+            with open(out_path, "r", encoding="utf-8") as f:
+                message = f.read().strip()
+        except FileNotFoundError:
+            message = ""
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or message).strip()
+            raise RuntimeError(
+                "Codex CLI failed. Make sure `codex` is installed and logged in."
+                + (f"\n{detail}" if detail else "")
+            )
+        return message or proc.stdout.strip()
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "Codex CLI was not found. Install it with: npm install -g @openai/codex"
+        ) from exc
+    finally:
+        try:
+            os.unlink(out_path)
+        except OSError:
+            pass
+
+
+def extract_json_object(text):
+    """Extract a JSON object from raw model output, including fenced blocks."""
+    text = (text or "").strip()
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S | re.I)
+    if fenced:
+        text = fenced.group(1)
+    else:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            text = text[start : end + 1]
+    return json.loads(text)
+
+
+def is_png(path):
+    """True if a file exists and starts with a PNG signature."""
+    if not os.path.exists(path):
+        return False
+    with open(path, "rb") as f:
+        return f.read(8) == b"\x89PNG\r\n\x1a\n"
+
+
 def slugify(text):
     text = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
     return text[:40] or "story"
@@ -175,15 +261,30 @@ def generate_story_text(client, instructions, page_count):
             "rules above): " + instructions.strip()
         )
     prompt = STORY_PROMPT.format(page_count=page_count, extra=extra)
-    resp = client.models.generate_content(
-        model=TEXT_MODEL,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            temperature=1.0,
-        ),
-    )
-    data = json.loads(resp.text)
+
+    if TEXT_PROVIDER == "codex":
+        data = extract_json_object(
+            run_codex(
+                prompt
+                + "\n\nReturn ONLY the JSON object. Do not include markdown, commentary, "
+                "or code fences. Do not run shell commands."
+            )
+        )
+    elif TEXT_PROVIDER == "gemini":
+        resp = client.models.generate_content(
+            model=TEXT_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                temperature=1.0,
+            ),
+        )
+        data = json.loads(resp.text)
+    else:
+        raise RuntimeError(
+            f"Unsupported VB_TEXT_PROVIDER={TEXT_PROVIDER!r}. Use 'gemini' or 'codex'."
+        )
+
     pages = data.get("pages", [])[:page_count]
     if not pages:
         raise RuntimeError("The model did not return any story pages.")
@@ -201,10 +302,13 @@ def _is_rate_limit_error(exc):
     )
 
 
-def generate_image(client, picture_desc, character, out_path, reference_png=None):
+def generate_image(client, picture_desc, character, out_path, reference_image=None):
     """Generate one illustration. Returns True on success.
 
-    Retries with exponential backoff when the API rate-limits us, so running many
+    Gemini and Codex both write PNG files. Codex CLI uses Image Gen 2 through
+    the user's logged-in Codex subscription, which avoids requiring a separate
+    image-generation API key.
+    Retries with exponential backoff when Gemini rate-limits us, so running many
     images concurrently doesn't silently drop pictures.
     """
     prompt_parts = [
@@ -214,9 +318,36 @@ def generate_image(client, picture_desc, character, out_path, reference_png=None
         "Keep the same character design and the same art style as any reference "
         "image provided.",
     ]
+
+    if IMAGE_PROVIDER == "codex":
+        codex_prompt = "\n".join(p for p in prompt_parts if p)
+        codex_prompt += (
+            "\n\nUse Image Gen 2 to create one normal PNG illustration for a "
+            "toddler's storybook. Make it cute, warm, colorful, and gentle; "
+            "avoid scary expressions, extra limbs, distorted anatomy, text, "
+            "letters, numbers, logos, or watermarks. Use a 4:3 landscape "
+            "composition suitable for a picture book page. Save the final PNG "
+            f"exactly at this path: {out_path}. Do not create SVG. After saving, "
+            "verify the file exists and starts with the PNG signature."
+        )
+        attachments = []
+        if reference_image and os.path.exists(reference_image):
+            attachments.append(reference_image)
+            codex_prompt += (
+                "\n\nThe attached reference image is page 1. Keep the same main "
+                "character and overall storybook style, while drawing the new scene."
+            )
+        run_codex(codex_prompt, sandbox="workspace-write", images=attachments)
+        return is_png(out_path)
+
+    if IMAGE_PROVIDER != "gemini":
+        raise RuntimeError(
+            f"Unsupported VB_IMAGE_PROVIDER={IMAGE_PROVIDER!r}. Use 'gemini' or 'codex'."
+        )
+
     contents = ["\n".join(p for p in prompt_parts if p)]
-    if reference_png and os.path.exists(reference_png):
-        with open(reference_png, "rb") as f:
+    if reference_image and os.path.exists(reference_image):
+        with open(reference_image, "rb") as f:
             contents.append(
                 types.Part.from_bytes(data=f.read(), mime_type="image/png")
             )
@@ -254,7 +385,7 @@ def run_generation(job_id, instructions, page_count):
             _jobs[job_id].update(kw)
 
     try:
-        client = get_client()
+        client = get_client() if "gemini" in (TEXT_PROVIDER, IMAGE_PROVIDER) else None
         set_status(stage="writing", message="Writing the story...")
         title, character, pages = generate_story_text(
             client, instructions, page_count
@@ -276,9 +407,7 @@ def run_generation(job_id, instructions, page_count):
             """Generate one illustration; bump progress. Returns the name or None."""
             img_path = os.path.join(d, img_name)
             try:
-                ok = generate_image(
-                    client, picture_desc, character, img_path, reference_png=reference
-                )
+                ok = generate_image(client, picture_desc, character, img_path, reference)
             except Exception:
                 ok = False
             with done_lock:
@@ -287,8 +416,12 @@ def run_generation(job_id, instructions, page_count):
             return img_name if ok else None
 
         # 1) Draw page 1 first as the style/character anchor for everything else.
+        image_ext = "png"
+
         anchor_name = draw(
-            pages[0].get("picture", pages[0].get("sentence", "")), "page_1.png", None
+            pages[0].get("picture", pages[0].get("sentence", "")),
+            f"page_1.{image_ext}",
+            None,
         )
         anchor = os.path.join(d, anchor_name) if anchor_name else None
         images = [anchor_name] + [None] * (len(pages) - 1)
@@ -298,13 +431,13 @@ def run_generation(job_id, instructions, page_count):
         def schedule():
             for i in range(1, len(pages)):
                 desc = pages[i].get("picture", pages[i].get("sentence", ""))
-                yield ("page", i, desc, f"page_{i + 1}.png")
+                yield ("page", i, desc, f"page_{i + 1}.{image_ext}")
             yield (
                 "end",
                 None,
                 "the main character smiling and waving goodbye to the reader, a "
                 "warm and cozy story-ending scene",
-                "page_end.png",
+                f"page_end.{image_ext}",
             )
 
         with concurrent.futures.ThreadPoolExecutor(
