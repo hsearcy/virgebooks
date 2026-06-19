@@ -49,9 +49,28 @@ const progressBar = $("#progress-bar");
 
 $("#generate-btn").addEventListener("click", generate);
 
+// Populate the reading-level dropdown from the server (single source of truth).
+async function loadLevels() {
+  const sel = $("#level");
+  try {
+    const { default: def, levels } = await (await fetch("/api/levels")).json();
+    sel.innerHTML = "";
+    for (const lvl of levels) {
+      const opt = document.createElement("option");
+      opt.value = lvl.id;
+      opt.textContent = lvl.label;
+      if (lvl.id === def) opt.selected = true;
+      sel.appendChild(opt);
+    }
+  } catch (e) {
+    // Leave the dropdown empty; the server defaults the level when none is sent.
+  }
+}
+
 async function generate() {
   const instructions = $("#instructions").value;
   const pages = parseInt($("#page-count").value, 10);
+  const level = $("#level").value;
   $("#generate-btn").disabled = true;
   overlay.classList.remove("hidden");
   overlayMsg.textContent = "Getting ready...";
@@ -62,7 +81,7 @@ async function generate() {
     const res = await fetch("/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ instructions, pages }),
+      body: JSON.stringify({ instructions, pages, level }),
     });
     const { job_id } = await res.json();
     await pollJob(job_id);
@@ -180,4 +199,5 @@ document.addEventListener("keydown", (e) => {
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---------- Boot ----------
+loadLevels();
 loadShelf();
