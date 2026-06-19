@@ -90,13 +90,41 @@ ILLUSTRATION_STYLE = (
     "image."
 )
 
-STORY_PROMPT = """You write tiny stories for a 3-year-old who is just starting to learn to read.
+# Reading levels (difficulty). Each level swaps the word-building rules in the
+# story prompt; everything else (sentence length, joining words, tone) stays the
+# same. Add a new entry here to introduce another difficulty. The dict key is the
+# value sent by the UI / API; `label` is the human-facing name; `word_rules` is
+# the rule line(s) injected into STORY_PROMPT.
+LEVELS = {
+    "cvc": {
+        "label": "Three-letter words (CVC)",
+        "word_rules": (
+            "- Build sentences almost entirely from simple three-letter CVC words\n"
+            "  (consonant-vowel-consonant). Examples: cat, dog, sun, hat, mat, sat, run, big,\n"
+            "  red, pig, bug, cup, bed, hen, fox, box, log, mud, jam, hop, top, wet, pot, pup,\n"
+            "  bun, net, dig, hug, kid, lap, map, nap, pan, rat, tap, van, web, yes, zip."
+        ),
+    },
+    "cvc-plus": {
+        "label": "Mostly CVC + some four-letter words",
+        "word_rules": (
+            "- Build sentences mostly from simple three-letter CVC words\n"
+            "  (consonant-vowel-consonant) like cat, dog, sun, hat, run, big, pig, bug, cup, bed.\n"
+            "- You MAY also use SOME easy four-letter words, but use them sparingly: at most\n"
+            "  one per sentence, and only sound-it-out simple ones a beginner can blend.\n"
+            "  Examples: stop, frog, jump, hand, fish, ship, duck, sock, milk, nest, hill,\n"
+            "  bump, gift, sand, tent, lamp, desk, ring, song, wind, fast, best, soft, swim."
+        ),
+    },
+}
+
+# The level used when none is requested or an unknown one is sent.
+DEFAULT_LEVEL = "cvc"
+
+STORY_PROMPT = """You write tiny stories for a young child who is just starting to learn to read.
 
 Follow these rules EXACTLY:
-- Build sentences almost entirely from simple three-letter CVC words
-  (consonant-vowel-consonant). Examples: cat, dog, sun, hat, mat, sat, run, big,
-  red, pig, bug, cup, bed, hen, fox, box, log, mud, jam, hop, top, wet, pot, pup,
-  bun, net, dig, hug, kid, lap, map, nap, pan, rat, tap, van, web, yes, zip.
+{word_rules}
 - You MAY use these little joining words, but use them sparingly: a, the, is, in,
   on, it, and, to.
 - Every page is ONE short sentence of 3 to 6 words.
@@ -116,6 +144,26 @@ Return ONLY valid JSON in this exact shape:
   ]
 }}
 """
+
+
+def normalize_level(level):
+    """Map a requested level to a known key, falling back to the default."""
+    key = (level or "").strip().lower().replace("_", "-")
+    return key if key in LEVELS else DEFAULT_LEVEL
+
+
+def build_story_prompt(page_count, instructions, level):
+    """Render STORY_PROMPT for the given page count, instructions, and level."""
+    extra = ""
+    if instructions and instructions.strip():
+        extra = (
+            "\n\nThe grown-up asked for this kind of story (keep following all the "
+            "rules above): " + instructions.strip()
+        )
+    word_rules = LEVELS[normalize_level(level)]["word_rules"]
+    return STORY_PROMPT.format(
+        page_count=page_count, extra=extra, word_rules=word_rules
+    )
 
 app = Flask(__name__, static_folder=None)
 
@@ -253,14 +301,8 @@ def list_stories():
     return out
 
 
-def generate_story_text(client, instructions, page_count):
-    extra = ""
-    if instructions and instructions.strip():
-        extra = (
-            "\n\nThe grown-up asked for this kind of story (keep following all the "
-            "rules above): " + instructions.strip()
-        )
-    prompt = STORY_PROMPT.format(page_count=page_count, extra=extra)
+def generate_story_text(client, instructions, page_count, level=DEFAULT_LEVEL):
+    prompt = build_story_prompt(page_count, instructions, level)
 
     if TEXT_PROVIDER == "codex":
         data = extract_json_object(
@@ -377,8 +419,10 @@ def generate_image(client, picture_desc, character, out_path, reference_image=No
     return False
 
 
-def run_generation(job_id, instructions, page_count):
+def run_generation(job_id, instructions, page_count, level=DEFAULT_LEVEL):
     """Background worker: build the whole story, updating job status as it goes."""
+
+    level = normalize_level(level)
 
     def set_status(**kw):
         with _jobs_lock:
@@ -388,7 +432,7 @@ def run_generation(job_id, instructions, page_count):
         client = get_client() if "gemini" in (TEXT_PROVIDER, IMAGE_PROVIDER) else None
         set_status(stage="writing", message="Writing the story...")
         title, character, pages = generate_story_text(
-            client, instructions, page_count
+            client, instructions, page_count, level
         )
 
         story_id = f"{int(time.time())}-{slugify(title)}-{job_id[:6]}"
@@ -466,6 +510,7 @@ def run_generation(job_id, instructions, page_count):
             "id": story_id,
             "title": title,
             "character": character,
+            "level": level,
             "created": int(time.time()),
             "cover": cover,
             "pages": out_pages,
@@ -488,6 +533,17 @@ def index():
 @app.route("/static/<path:filename>")
 def static_files(filename):
     return send_from_directory(STATIC_DIR, filename)
+
+
+@app.route("/api/levels")
+def api_levels():
+    """Reading levels (difficulty) the UI can offer, in order, with the default."""
+    return jsonify(
+        {
+            "default": DEFAULT_LEVEL,
+            "levels": [{"id": k, "label": v["label"]} for k, v in LEVELS.items()],
+        }
+    )
 
 
 @app.route("/api/stories")
@@ -514,13 +570,14 @@ def api_generate():
     instructions = body.get("instructions", "")
     page_count = int(body.get("pages") or DEFAULT_PAGE_COUNT)
     page_count = max(3, min(page_count, 12))
+    level = normalize_level(body.get("level"))
 
     job_id = uuid.uuid4().hex
     with _jobs_lock:
         _jobs[job_id] = {"stage": "starting", "message": "Getting ready..."}
     threading.Thread(
         target=run_generation,
-        args=(job_id, instructions, page_count),
+        args=(job_id, instructions, page_count, level),
         daemon=True,
     ).start()
     return jsonify({"job_id": job_id})

@@ -2,11 +2,18 @@
 
 A tiny AI story-book generator to help a young child learn to read.
 
-Every story is built from simple **three-letter CVC words** (consonant-vowel-consonant,
-like *cat, dog, sun, hat*). Each page shows **one short sentence and one picture**, and
-every picture in every book shares the same friendly illustration style. Stories are
-saved so they can be re-read any time — the home screen is a shelf of past stories plus
-a box to make a new one.
+Stories are built from simple words, with a **reading level** you choose per story so
+the difficulty can grow with your reader:
+
+- **Three-letter words (CVC)** — the default; everything is consonant-vowel-consonant,
+  like *cat, dog, sun, hat*.
+- **Mostly CVC + some four-letter words** — still mostly CVC, but sprinkles in a few
+  easy, sound-it-out four-letter words like *frog, jump, fish, milk* for variety once a
+  reader is ready for them.
+
+Each page shows **one short sentence and one picture**, and every picture in every book
+shares the same friendly illustration style. Stories are saved so they can be re-read
+any time — the home screen is a shelf of past stories plus a box to make a new one.
 
 It runs as a small local web app, so it works on **any platform** (Windows, Mac, Linux,
 and tablets/phones on the same network) through a web browser.
@@ -52,7 +59,8 @@ and tablets/phones on the same network) through a web browser.
 ## Using it
 
 - **Make a story:** Optionally type what it should be about (e.g. *"a pig and a red hat"*),
-  pick how many pages, and tap **Make a story**. Leave the box empty for a surprise.
+  pick a **reading level** and how many pages, and tap **Make a story**. Leave the box
+  empty for a surprise.
 - **Read a story:** Tap a book on the shelf. Tap the **left or right half of the picture**
   (or the big arrows / keyboard arrows) to turn pages — one sentence at a time.
 
@@ -74,6 +82,12 @@ and tablets/phones on the same network) through a web browser.
 
 ## Notes
 
+- **Reading levels** are defined in the `LEVELS` dict near the top of `app.py`. Each
+  level just swaps the word-building rules in the story prompt (sentence length, tone,
+  and everything else stay the same), so adding a new difficulty is a few lines — give it
+  an `id`, a `label`, and its `word_rules`. The UI fills its dropdown from `GET /api/levels`,
+  and `POST /api/generate` accepts a `level` field (unknown/missing levels fall back to
+  `DEFAULT_LEVEL`, currently `cvc`). The chosen level is saved in each story's `story.json`.
 - Providers and models are configurable with environment variables (`VB_TEXT_PROVIDER`,
   `VB_IMAGE_PROVIDER`, `VB_TEXT_MODEL`, `VB_IMAGE_MODEL`, `VB_CODEX_MODEL`), and the
   illustration style is configurable near the top of `app.py` (`ILLUSTRATION_STYLE`).
