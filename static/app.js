@@ -215,6 +215,16 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") $("#close-book").click();
 });
 
+// Tap a letter to "stick" it enlarged (handy on touch screens with no hover);
+// re-tapping it, or tapping anywhere else, unsticks it.
+document.addEventListener("click", (e) => {
+  const sentence = $("#page-sentence");
+  const letter = e.target.closest(".letter");
+  const stickThis = letter && sentence.contains(letter) && !letter.classList.contains("stuck");
+  sentence.querySelectorAll(".letter.stuck").forEach((l) => l.classList.remove("stuck"));
+  if (stickThis) letter.classList.add("stuck");
+});
+
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---------- Boot ----------
