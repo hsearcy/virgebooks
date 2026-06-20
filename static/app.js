@@ -151,12 +151,31 @@ function renderPage() {
     img.removeAttribute("src");
     img.style.visibility = "hidden";
   }
-  $("#page-sentence").textContent = page.sentence;
+  renderSentence($("#page-sentence"), page.sentence);
   $("#prev").disabled = pageIndex === 0;
   $("#next").disabled = pageIndex === currentStory.pages.length - 1;
   document.querySelectorAll(".dot").forEach((d, i) =>
     d.classList.toggle("active", i === pageIndex)
   );
+}
+
+// Render a sentence as words of individual letter spans, so each letter can
+// grow on hover and selection uses our friendly highlight color.
+function renderSentence(el, text) {
+  el.textContent = "";
+  const words = (text || "").split(" ");
+  words.forEach((word, i) => {
+    if (i > 0) el.appendChild(document.createTextNode(" "));
+    const wordSpan = document.createElement("span");
+    wordSpan.className = "word";
+    for (const ch of word) {
+      const letter = document.createElement("span");
+      letter.className = "letter";
+      letter.textContent = ch;
+      wordSpan.appendChild(letter);
+    }
+    el.appendChild(wordSpan);
+  });
 }
 
 function buildDots() {
