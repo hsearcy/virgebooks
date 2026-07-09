@@ -90,30 +90,58 @@ ILLUSTRATION_STYLE = (
     "image."
 )
 
+# Example word banks for the reading levels below. A random sample is drawn for
+# each generation so the model doesn't fixate on the same few words (early list
+# items like "cup" used to star in far too many stories).
+CVC_WORDS = [
+    "cat", "dog", "sun", "hat", "mat", "sat", "run", "big", "red", "pig",
+    "bug", "cup", "bed", "hen", "fox", "box", "log", "mud", "jam", "hop",
+    "top", "wet", "pot", "pup", "bun", "net", "dig", "hug", "kid", "lap",
+    "map", "nap", "pan", "rat", "tap", "van", "web", "yes", "zip", "bat",
+    "cab", "cob", "dot", "fan", "fig", "gum", "ham", "jet", "leg", "lid",
+    "mop", "nut", "pin", "rug", "sip", "tub", "wig", "yak", "zag", "bee",
+]
+FOUR_LETTER_WORDS = [
+    "stop", "frog", "jump", "hand", "fish", "ship", "duck", "sock", "milk",
+    "nest", "hill", "bump", "gift", "sand", "tent", "lamp", "desk", "ring",
+    "song", "wind", "fast", "best", "soft", "swim", "clap", "drum", "flag",
+    "grin", "help", "kick", "land", "mask", "pond", "rock", "skip", "spin",
+    "star", "twig", "wave", "wish",
+]
+
 # Reading levels (difficulty). Each level swaps the word-building rules in the
 # story prompt; everything else (sentence length, joining words, tone) stays the
 # same. Add a new entry here to introduce another difficulty. The dict key is the
 # value sent by the UI / API; `label` is the human-facing name; `word_rules` is
-# the rule line(s) injected into STORY_PROMPT.
+# the rule line(s) injected into STORY_PROMPT, with {cvc} and {four} filled from
+# a fresh random sample of the word banks above at generation time.
 LEVELS = {
     "cvc": {
         "label": "Three-letter words (CVC)",
         "word_rules": (
             "- Build sentences almost entirely from simple three-letter CVC words\n"
-            "  (consonant-vowel-consonant). Examples: cat, dog, sun, hat, mat, sat, run, big,\n"
-            "  red, pig, bug, cup, bed, hen, fox, box, log, mud, jam, hop, top, wet, pot, pup,\n"
-            "  bun, net, dig, hug, kid, lap, map, nap, pan, rat, tap, van, web, yes, zip."
+            "  (consonant-vowel-consonant). Examples: {cvc}."
         ),
     },
     "cvc-plus": {
         "label": "Mostly CVC + some four-letter words",
         "word_rules": (
             "- Build sentences mostly from simple three-letter CVC words\n"
-            "  (consonant-vowel-consonant) like cat, dog, sun, hat, run, big, pig, bug, cup, bed.\n"
+            "  (consonant-vowel-consonant). Examples: {cvc}.\n"
             "- You MAY also use SOME easy four-letter words, but use them sparingly: at most\n"
             "  one per sentence, and only sound-it-out simple ones a beginner can blend.\n"
-            "  Examples: stop, frog, jump, hand, fish, ship, duck, sock, milk, nest, hill,\n"
-            "  bump, gift, sand, tent, lamp, desk, ring, song, wind, fast, best, soft, swim."
+            "  Examples: {four}."
+        ),
+    },
+    "four-plus": {
+        "label": "Plenty of four-letter words",
+        "word_rules": (
+            "- Build sentences from a friendly mix of simple three-letter CVC words\n"
+            "  (consonant-vowel-consonant) and easy four-letter words. Use four-letter words\n"
+            "  freely and often (a sentence may have several), but keep every word a simple\n"
+            "  sound-it-out one a beginner can blend -- no silent letters or tricky spellings.\n"
+            "  Three-letter examples: {cvc}.\n"
+            "  Four-letter examples: {four}."
         ),
     },
 }
@@ -132,6 +160,9 @@ Follow these rules EXACTLY:
 - Keep a single cute main character (an animal or kid) across all pages so the
   pictures can stay consistent.
 - Make it a fun, gentle little story a toddler will enjoy.
+- The example words are only examples, NOT a required list. Use a wide variety
+  of simple words that fit the rules, and do not build the story around the
+  same everyday objects every time.
 
 Write a story of exactly {page_count} pages.{extra}
 
@@ -152,15 +183,22 @@ def normalize_level(level):
     return key if key in LEVELS else DEFAULT_LEVEL
 
 
-def build_story_prompt(page_count, instructions, level):
-    """Render STORY_PROMPT for the given page count, instructions, and level."""
+def build_story_prompt(page_count, instructions, level, rng=random):
+    """Render STORY_PROMPT for the given page count, instructions, and level.
+
+    Example words are freshly sampled and shuffled each call so the model
+    doesn't latch onto the same handful of words (looking at you, "cup").
+    """
     extra = ""
     if instructions and instructions.strip():
         extra = (
             "\n\nThe grown-up asked for this kind of story (keep following all the "
             "rules above): " + instructions.strip()
         )
-    word_rules = LEVELS[normalize_level(level)]["word_rules"]
+    word_rules = LEVELS[normalize_level(level)]["word_rules"].format(
+        cvc=", ".join(rng.sample(CVC_WORDS, 24)),
+        four=", ".join(rng.sample(FOUR_LETTER_WORDS, 20)),
+    )
     return STORY_PROMPT.format(
         page_count=page_count, extra=extra, word_rules=word_rules
     )

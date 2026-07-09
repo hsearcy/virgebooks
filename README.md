@@ -10,6 +10,11 @@ the difficulty can grow with your reader:
 - **Mostly CVC + some four-letter words** — still mostly CVC, but sprinkles in a few
   easy, sound-it-out four-letter words like *frog, jump, fish, milk* for variety once a
   reader is ready for them.
+- **Plenty of four-letter words** — a free mix of CVC and easy four-letter words (still
+  all simple sound-it-out spellings), for a reader comfortable blending longer words.
+
+Example words are randomly sampled for every story so the generator doesn't fixate on
+the same few words from a fixed list.
 
 Each page shows **one short sentence and one picture**, and every picture in every book
 shares the same friendly illustration style. Stories are saved so they can be re-read
@@ -85,7 +90,8 @@ and tablets/phones on the same network) through a web browser.
 - **Reading levels** are defined in the `LEVELS` dict near the top of `app.py`. Each
   level just swaps the word-building rules in the story prompt (sentence length, tone,
   and everything else stay the same), so adding a new difficulty is a few lines — give it
-  an `id`, a `label`, and its `word_rules`. The UI fills its dropdown from `GET /api/levels`,
+  an `id`, a `label`, and its `word_rules` (with `{cvc}`/`{four}` placeholders filled
+  from the `CVC_WORDS`/`FOUR_LETTER_WORDS` banks, freshly shuffled per story). The UI fills its dropdown from `GET /api/levels`,
   and `POST /api/generate` accepts a `level` field (unknown/missing levels fall back to
   `DEFAULT_LEVEL`, currently `cvc`). The chosen level is saved in each story's `story.json`.
 - Providers and models are configurable with environment variables (`VB_TEXT_PROVIDER`,
