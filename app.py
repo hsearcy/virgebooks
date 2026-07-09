@@ -128,18 +128,20 @@ LEVELS = {
         "word_rules": (
             "- Build sentences mostly from simple three-letter CVC words\n"
             "  (consonant-vowel-consonant). Examples: {cvc}.\n"
-            "- You MAY also use SOME easy four-letter words, but use them sparingly: at most\n"
-            "  one per sentence, and only sound-it-out simple ones a beginner can blend.\n"
-            "  Examples: {four}."
+            "- Also use SOME easy four-letter words, but sparingly: at most one per\n"
+            "  sentence, on roughly a third of the pages, and only sound-it-out simple\n"
+            "  ones a beginner can blend. Examples: {four}."
         ),
     },
     "four-plus": {
         "label": "Plenty of four-letter words",
         "word_rules": (
             "- Build sentences from a friendly mix of simple three-letter CVC words\n"
-            "  (consonant-vowel-consonant) and easy four-letter words. Use four-letter words\n"
-            "  freely and often (a sentence may have several), but keep every word a simple\n"
-            "  sound-it-out one a beginner can blend -- no silent letters or tricky spellings.\n"
+            "  (consonant-vowel-consonant) and easy four-letter words.\n"
+            "- Every sentence MUST contain at least one four-letter word, and a sentence\n"
+            "  may have several. This is the most important rule.\n"
+            "- Keep every word a simple sound-it-out one a beginner can blend -- no silent\n"
+            "  letters or tricky spellings.\n"
             "  Three-letter examples: {cvc}.\n"
             "  Four-letter examples: {four}."
         ),
@@ -339,36 +341,73 @@ def list_stories():
     return out
 
 
+def pages_with_four_letter_word(pages):
+    """How many pages have at least one four-letter word in their sentence."""
+    count = 0
+    for page in pages:
+        words = re.findall(r"[A-Za-z]+", page.get("sentence", ""))
+        if any(len(w) == 4 for w in words):
+            count += 1
+    return count
+
+
+def level_satisfied(level, pages):
+    """True if the story's pages actually honor the requested reading level.
+
+    Models sometimes ignore the harder level and write pure CVC anyway, so we
+    verify the promise programmatically and let the caller retry.
+    """
+    if level == "four-plus":
+        # The rule says every sentence, but accept half as good enough rather
+        # than burning retries chasing perfection.
+        return pages_with_four_letter_word(pages) >= max(1, len(pages) // 2)
+    if level == "cvc-plus":
+        return pages_with_four_letter_word(pages) >= 1
+    return True
+
+
 def generate_story_text(client, instructions, page_count, level=DEFAULT_LEVEL):
-    prompt = build_story_prompt(page_count, instructions, level)
+    level = normalize_level(level)
 
-    if TEXT_PROVIDER == "codex":
-        data = extract_json_object(
-            run_codex(
-                prompt
-                + "\n\nReturn ONLY the JSON object. Do not include markdown, commentary, "
-                "or code fences. Do not run shell commands."
+    def ask():
+        # Fresh prompt per attempt so a retry also gets a fresh word sample.
+        prompt = build_story_prompt(page_count, instructions, level)
+
+        if TEXT_PROVIDER == "codex":
+            data = extract_json_object(
+                run_codex(
+                    prompt
+                    + "\n\nReturn ONLY the JSON object. Do not include markdown, commentary, "
+                    "or code fences. Do not run shell commands."
+                )
             )
-        )
-    elif TEXT_PROVIDER == "gemini":
-        resp = client.models.generate_content(
-            model=TEXT_MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                temperature=1.0,
-            ),
-        )
-        data = json.loads(resp.text)
-    else:
-        raise RuntimeError(
-            f"Unsupported VB_TEXT_PROVIDER={TEXT_PROVIDER!r}. Use 'gemini' or 'codex'."
-        )
+        elif TEXT_PROVIDER == "gemini":
+            resp = client.models.generate_content(
+                model=TEXT_MODEL,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=1.0,
+                ),
+            )
+            data = json.loads(resp.text)
+        else:
+            raise RuntimeError(
+                f"Unsupported VB_TEXT_PROVIDER={TEXT_PROVIDER!r}. Use 'gemini' or 'codex'."
+            )
 
-    pages = data.get("pages", [])[:page_count]
-    if not pages:
-        raise RuntimeError("The model did not return any story pages.")
-    return data.get("title", "A Story"), data.get("character", ""), pages
+        pages = data.get("pages", [])[:page_count]
+        if not pages:
+            raise RuntimeError("The model did not return any story pages.")
+        return data.get("title", "A Story"), data.get("character", ""), pages
+
+    title, character, pages = ask()
+    if not level_satisfied(level, pages):
+        # One retry; keep whichever attempt honors the level better.
+        retry = ask()
+        if pages_with_four_letter_word(retry[2]) > pages_with_four_letter_word(pages):
+            title, character, pages = retry
+    return title, character, pages
 
 
 def _is_rate_limit_error(exc):
