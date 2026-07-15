@@ -87,6 +87,11 @@ and tablets/phones on the same network) through a web browser.
 
 ## Notes
 
+- The UI uses **Andika** (SIL Open Font License), a font designed for beginning
+  readers: every letter is distinct (capital I has crossbars, lowercase l has a tail,
+  single-story a and g). It's bundled in `static/fonts/`, so every device — including
+  tablets on the LAN — renders the same letterforms with no internet needed.
+
 - **Reading levels** are defined in the `LEVELS` dict near the top of `app.py`. Each
   level just swaps the word-building rules in the story prompt (sentence length, tone,
   and everything else stay the same), so adding a new difficulty is a few lines — give it

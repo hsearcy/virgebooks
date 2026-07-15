@@ -8,12 +8,31 @@
   --radius: 22px;
 }
 
+/* Andika (SIL Open Font License) is designed for beginning readers: every
+   letter is distinct — capital I has crossbars, lowercase l has a tail, and
+   a/g are single-story like handwriting. Bundled locally so every device
+   (including tablets on the LAN) renders the same letterforms. */
+@font-face {
+  font-family: "Andika";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/static/fonts/andika-regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Andika";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/static/fonts/andika-bold.woff2") format("woff2");
+}
+
 * { box-sizing: border-box; }
 
 html, body {
   margin: 0;
   height: 100%;
-  font-family: "Comic Sans MS", "Chalkboard SE", "Baloo 2", "Segoe UI", sans-serif;
+  font-family: "Andika", "Comic Sans MS", "Chalkboard SE", "Baloo 2", "Segoe UI", sans-serif;
   background: var(--bg);
   color: var(--ink);
   -webkit-tap-highlight-color: transparent;
