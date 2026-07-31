@@ -68,6 +68,15 @@ class BuildStoryPromptTests(unittest.TestCase):
         prompt = app.build_story_prompt(5, "a pig and a red hat", "cvc")
         self.assertIn("a pig and a red hat", prompt)
 
+    def test_instructions_allow_longer_prompt_words_as_exception(self):
+        prompt = app.build_story_prompt(5, "a story about a dragon", "cvc")
+        self.assertIn("Exception:", prompt)
+        self.assertIn("keep every OTHER word within the rules", prompt)
+
+    def test_no_exception_clause_without_instructions(self):
+        prompt = app.build_story_prompt(5, "", "cvc")
+        self.assertNotIn("Exception:", prompt)
+
     def test_blank_instructions_add_nothing(self):
         with_blank = app.build_story_prompt(5, "   ", "cvc", rng=random.Random(7))
         without = app.build_story_prompt(5, "", "cvc", rng=random.Random(7))

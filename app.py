@@ -195,7 +195,11 @@ def build_story_prompt(page_count, instructions, level, rng=random):
     if instructions and instructions.strip():
         extra = (
             "\n\nThe grown-up asked for this kind of story (keep following all the "
-            "rules above): " + instructions.strip()
+            "rules above): " + instructions.strip() + "\n"
+            "Exception: if the request names a thing whose word is longer than the "
+            "word rules allow (like 'dragon' or 'tiger'), you may still use that "
+            "exact word -- the child wants to see it. Use it naturally where the "
+            "story needs it, and keep every OTHER word within the rules."
         )
     word_rules = LEVELS[normalize_level(level)]["word_rules"].format(
         cvc=", ".join(rng.sample(CVC_WORDS, 24)),
