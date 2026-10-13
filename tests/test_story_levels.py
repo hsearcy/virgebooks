@@ -57,6 +57,15 @@ class BuildStoryPromptTests(unittest.TestCase):
         self.assertIn("MUST contain at least one four-letter word", prompt)
         self.assertNotIn("sparingly: at most one per", prompt)
 
+    def test_sounds_level_requires_digraphs_and_long_vowels(self):
+        prompt = app.build_story_prompt(10, "", "sounds")
+        self.assertIn("MUST contain at least one word with sh, ch, th, or wh", prompt)
+        self.assertIn("long vowel", prompt)
+        self.assertIn("five-letter", prompt)
+        # Silent-e words are the point here, so the four-plus "no silent letters"
+        # rule must not leak in and contradict them.
+        self.assertNotIn("no silent letters", prompt)
+
     def test_unknown_level_falls_back_to_default_rules(self):
         unknown = app.build_story_prompt(10, "", "wizard", rng=random.Random(7))
         default = app.build_story_prompt(
@@ -123,6 +132,51 @@ class LevelSatisfiedTests(unittest.TestCase):
             "Max can jump.", "Max ran fast.", "Max dug in sand.", "A frog can hop.",
         )
         self.assertTrue(app.level_satisfied("four-plus", good))
+
+
+class SoundsLevelTests(unittest.TestCase):
+    def test_digraph_words_ignore_the(self):
+        self.assertEqual(app.pages_with_digraph_word(_pages("The cat sat.")), 0)
+        self.assertEqual(
+            app.pages_with_digraph_word(
+                _pages("The fish can swim.", "Chip ran.", "Max hid.", "A whale!")
+            ),
+            3,
+        )
+
+    def test_long_vowel_words(self):
+        pages = _pages(
+            "Max ate cake.", "The boat is red.", "Max can play.",
+            "A tree is big.", "Max ran fast.",
+        )
+        self.assertEqual(app.pages_with_long_vowel_word(pages), 4)
+
+    def test_long_vowel_handles_s_endings_and_look_alikes(self):
+        self.assertEqual(app.pages_with_long_vowel_word(_pages("Max takes it.")), 1)
+        self.assertEqual(
+            app.pages_with_long_vowel_word(_pages("Max comes.", "We have fun.")), 0
+        )
+
+    def test_sounds_needs_digraphs_on_half_and_some_long_vowels(self):
+        no_digraphs = _pages(
+            "Max ate cake.", "Max can play.", "Max sat.", "Max ran fast.",
+        )
+        self.assertFalse(app.level_satisfied("sounds", no_digraphs))
+        no_long = _pages(
+            "Max has a fish.", "Max can chop.", "Max sat.", "Max ran fast.",
+        )
+        self.assertFalse(app.level_satisfied("sounds", no_long))
+        good = _pages(
+            "Max has a fish.", "Max can chop.", "The ship can sail.", "Max ran fast.",
+        )
+        self.assertTrue(app.level_satisfied("sounds", good))
+
+    def test_retry_prefers_attempt_that_fits_the_level_better(self):
+        weak = _pages("Max sat.", "Max ran fast.")
+        strong = _pages("Max has a fish.", "The ship can sail.")
+        self.assertGreater(
+            app.level_score("sounds", strong), app.level_score("sounds", weak)
+        )
 
 
 if __name__ == "__main__":

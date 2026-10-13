@@ -108,13 +108,31 @@ FOUR_LETTER_WORDS = [
     "grin", "help", "kick", "land", "mask", "pond", "rock", "skip", "spin",
     "star", "twig", "wave", "wish",
 ]
+# Words that practice the sh / ch / th / wh sounds, four and five letters long.
+DIGRAPH_WORDS = [
+    "ship", "shop", "shed", "shut", "fish", "dish", "wish", "rush", "shell",
+    "shelf", "brush", "chin", "chip", "chop", "chat", "much", "rich", "chick",
+    "lunch", "bench", "thin", "then", "this", "that", "them", "with", "bath",
+    "path", "moth", "math", "thump", "when", "whip", "whiz", "shake", "shine",
+    "sheep", "teeth", "three", "chase", "cheek", "white", "whale", "beach",
+    "peach", "shade",
+]
+# Long-vowel words: silent e (cake, bike) and vowel teams (rain, feet, boat).
+LONG_VOWEL_WORDS = [
+    "cake", "lake", "game", "gate", "bike", "kite", "ride", "five", "home",
+    "rope", "nose", "bone", "cute", "tube", "mule", "rain", "tail", "sail",
+    "snail", "train", "play", "day", "tray", "feet", "seed", "tree", "sleep",
+    "green", "leaf", "sea", "team", "read", "boat", "road", "goat", "soap",
+    "toad", "smile", "plane", "stone", "snake",
+]
 
 # Reading levels (difficulty). Each level swaps the word-building rules in the
 # story prompt; everything else (sentence length, joining words, tone) stays the
 # same. Add a new entry here to introduce another difficulty. The dict key is the
 # value sent by the UI / API; `label` is the human-facing name; `word_rules` is
 # the rule line(s) injected into STORY_PROMPT, with {cvc} and {four} filled from
-# a fresh random sample of the word banks above at generation time.
+# a fresh random sample of the word banks above at generation time ({digraph}
+# and {long} likewise).
 LEVELS = {
     "cvc": {
         "label": "Three-letter words (CVC)",
@@ -144,6 +162,23 @@ LEVELS = {
             "  letters or tricky spellings.\n"
             "  Three-letter examples: {cvc}.\n"
             "  Four-letter examples: {four}."
+        ),
+    },
+    "sounds": {
+        "label": "Longer words: sh, ch, th + long vowels",
+        "word_rules": (
+            "- Build sentences mostly from four-letter words, with some five-letter\n"
+            "  words. Short three-letter words are fine to fill in around them.\n"
+            "- Every sentence MUST contain at least one word with sh, ch, th, or wh\n"
+            "  (the word \"the\" does not count). This is the most important rule.\n"
+            "  Use a mix of all four sounds across the story, not just one.\n"
+            "  Examples: {digraph}.\n"
+            "- On at least a third of the pages, also use a long vowel word: a silent-e\n"
+            "  word (cake, bike, home, cute) or a vowel team (rain, play, feet, sea, boat).\n"
+            "  Examples: {long}.\n"
+            "- Keep every word easy to sound out. Silent e and the vowel teams above are\n"
+            "  fine, but avoid other tricky spellings (no kn, gh, ough, or odd vowels).\n"
+            "  Other four-letter examples: {four}."
         ),
     },
 }
@@ -204,6 +239,8 @@ def build_story_prompt(page_count, instructions, level, rng=random):
     word_rules = LEVELS[normalize_level(level)]["word_rules"].format(
         cvc=", ".join(rng.sample(CVC_WORDS, 24)),
         four=", ".join(rng.sample(FOUR_LETTER_WORDS, 20)),
+        digraph=", ".join(rng.sample(DIGRAPH_WORDS, 20)),
+        long=", ".join(rng.sample(LONG_VOWEL_WORDS, 16)),
     )
     return STORY_PROMPT.format(
         page_count=page_count, extra=extra, word_rules=word_rules
@@ -345,14 +382,57 @@ def list_stories():
     return out
 
 
-def pages_with_four_letter_word(pages):
-    """How many pages have at least one four-letter word in their sentence."""
+def _pages_with_word(pages, test):
+    """How many pages have at least one sentence word (lowercased) passing test."""
     count = 0
     for page in pages:
-        words = re.findall(r"[A-Za-z]+", page.get("sentence", ""))
-        if any(len(w) == 4 for w in words):
+        words = re.findall(r"[a-z]+", page.get("sentence", "").lower())
+        if any(test(w) for w in words):
             count += 1
     return count
+
+
+def pages_with_four_letter_word(pages):
+    """How many pages have at least one four-letter word in their sentence."""
+    return _pages_with_word(pages, lambda w: len(w) == 4)
+
+
+def _is_digraph_word(word):
+    return word != "the" and re.search(r"sh|ch|th|wh", word) is not None
+
+
+def pages_with_digraph_word(pages):
+    """How many pages have a word with sh, ch, th, or wh (not counting "the")."""
+    return _pages_with_word(pages, _is_digraph_word)
+
+
+# Silent-e look-alikes that do not make a long vowel.
+_NOT_LONG_VOWEL = {
+    "are", "have", "give", "live", "love", "come", "some", "done", "gone",
+    "none", "one", "were", "there", "where", "move", "lose",
+}
+
+
+def _is_long_vowel_word(word):
+    if word in _NOT_LONG_VOWEL or word[:-1] in _NOT_LONG_VOWEL:
+        return False
+    # Silent e (cake, ate, takes) or a vowel team (rain, play, feet, sea, boat).
+    return bool(
+        re.search(r"[aeiou][^aeiouwy]es?$", word)
+        or re.search(r"ai|ay|ee|ea|oa", word)
+    )
+
+
+def pages_with_long_vowel_word(pages):
+    """How many pages have a silent-e or vowel-team (long vowel) word."""
+    return _pages_with_word(pages, _is_long_vowel_word)
+
+
+def level_score(level, pages):
+    """How well pages fit a level; higher is better. Used to pick a retry."""
+    if level == "sounds":
+        return pages_with_digraph_word(pages) + pages_with_long_vowel_word(pages)
+    return pages_with_four_letter_word(pages)
 
 
 def level_satisfied(level, pages):
@@ -367,6 +447,12 @@ def level_satisfied(level, pages):
         return pages_with_four_letter_word(pages) >= max(1, len(pages) // 2)
     if level == "cvc-plus":
         return pages_with_four_letter_word(pages) >= 1
+    if level == "sounds":
+        # Same leniency as four-plus: digraphs on half the pages, and long
+        # vowels on a quarter (the prompt asks for a third).
+        return pages_with_digraph_word(pages) >= max(1, len(pages) // 2) and (
+            pages_with_long_vowel_word(pages) >= max(1, len(pages) // 4)
+        )
     return True
 
 
@@ -409,7 +495,7 @@ def generate_story_text(client, instructions, page_count, level=DEFAULT_LEVEL):
     if not level_satisfied(level, pages):
         # One retry; keep whichever attempt honors the level better.
         retry = ask()
-        if pages_with_four_letter_word(retry[2]) > pages_with_four_letter_word(pages):
+        if level_score(level, retry[2]) > level_score(level, pages):
             title, character, pages = retry
     return title, character, pages
 

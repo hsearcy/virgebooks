@@ -12,6 +12,9 @@ the difficulty can grow with your reader:
   reader is ready for them.
 - **Plenty of four-letter words** — a free mix of CVC and easy four-letter words (still
   all simple sound-it-out spellings), for a reader comfortable blending longer words.
+- **Longer words: sh, ch, th + long vowels** — mostly four-letter words with some
+  five-letter ones. Every sentence practices a *sh, ch, th,* or *wh* sound (*fish, chop,
+  bath, when*), and many pages add a long vowel word (*cake, bike, rain, feet, boat*).
 
 Example words are randomly sampled for every story so the generator doesn't fixate on
 the same few words from a fixed list.
